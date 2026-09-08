@@ -14,22 +14,7 @@ if errorlevel 1 (
   goto :fin
 )
 
-set "PY="
-py -3 --version >nul 2>&1 && set "PY=py -3"
-if not defined PY ( python --version >nul 2>&1 && set "PY=python" )
-if not defined PY ( python3 --version >nul 2>&1 && set "PY=python3" )
-
-if defined PY (
-  echo   Usando !PY!
-  echo.
-  !PY! publicar.py --auto
-  goto :fin
-)
-
-echo   No hay Python instalado. Voy por la via corta, solo con git.
-echo   (Asi no se comprueba que el JSON sea valido.)
-echo.
-
+REM ---- Buscar el datos.json mas reciente en Descargas ----
 set "NUEVO="
 for %%D in ("%USERPROFILE%\Downloads" "%USERPROFILE%\Descargas") do (
   if exist "%%~D" (
@@ -39,14 +24,42 @@ for %%D in ("%USERPROFILE%\Downloads" "%USERPROFILE%\Descargas") do (
   )
 )
 
-if defined NUEVO (
-  echo   Copiando "!NUEVO!"
-  copy /y "!NUEVO!" "datos.json" >nul
-) else (
+if not defined NUEVO (
   echo   No hay ningun datos.json nuevo en Descargas.
   echo   Subo lo que ya haya en la carpeta.
+  goto :subir
 )
 
+echo   Encontrado: "!NUEVO!"
+echo   Comprobando que el fichero es correcto...
+
+REM ---- Validar el JSON con PowerShell antes de tocar nada ----
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop';" ^
+  "try {" ^
+  "  $d = Get-Content -Raw -Encoding UTF8 '!NUEVO!' | ConvertFrom-Json;" ^
+  "  if (-not $d.partidos)      { Write-Host '   FALLO: no tiene la lista partidos.'; exit 1 }" ^
+  "  if (-not $d.clasificacion) { Write-Host '   FALLO: no tiene la lista clasificacion.'; exit 1 }" ^
+  "  $np = @($d.partidos).Count; $nc = @($d.clasificacion).Count;" ^
+  "  $jug = @($d.partidos ^| Where-Object { $_.gf -ne $null }).Count;" ^
+  "  Write-Host \"   OK: $np partidos, $nc equipos, $jug jornadas disputadas.\";" ^
+  "  if ($np -ne 34) { Write-Host '   AVISO: no hay 34 partidos. Revisalo.' }" ^
+  "  if ($nc -ne 18) { Write-Host '   AVISO: no hay 18 equipos. Revisalo.' }" ^
+  "  exit 0" ^
+  "} catch { Write-Host ('   FALLO: el fichero no es JSON valido. ' + $_.Exception.Message); exit 1 }"
+
+if errorlevel 1 (
+  echo.
+  echo   No subo nada, para no dejar la web rota.
+  echo   Vuelve a descargar el fichero y pruebalo otra vez.
+  goto :fin
+)
+
+if exist "datos.json" copy /y "datos.json" "datos.json.anterior" >nul
+copy /y "!NUEVO!" "datos.json" >nul
+echo   datos.json sustituido. Copia del anterior en datos.json.anterior
+
+:subir
 echo.
 git add -A
 git commit -m "Actualiza datos"
